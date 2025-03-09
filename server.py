@@ -13,6 +13,8 @@ INACTIVITY_TIMEOUT = 30
 client_failures = {}
 client_timestamp = {}
 
+server_sent_messages = 0
+
 lock = threading.Lock()
 
 # Function to increment client failure count and remove if exceeded
@@ -29,6 +31,7 @@ def remove_client_due_to_failures(client_address):
 
 # Function to handle incoming messages and broadcast them
 def handle_client(server_socket):
+    global server_sent_messages
     while True:
         try:
             message, client_address = server_socket.recvfrom(BUFFER_SIZE)
@@ -61,7 +64,7 @@ def handle_client(server_socket):
                 increment_failure_count(client_address)
                 continue
 
-            print(f"{username}: {message_body}")
+            # print(f"{username}: {message_body}")
 
             with lock:
                 client_failures[client_address] = 0
@@ -71,6 +74,8 @@ def handle_client(server_socket):
             for client in list(client_timestamp.keys()):
                 try:
                     server_socket.sendto(message, client)
+                    with lock:
+                        server_sent_messages += 1
                 except Exception as e:
                     increment_failure_count(client)
 
@@ -90,6 +95,12 @@ def remove_inactive_clients():
                     print(f"Client {client} removed due to inactivity.")
 
 
+def print_server_statistics():
+    while True:
+        time.sleep(3)
+        print(f"Total messages sent by server: {server_sent_messages}")
+
+
 if __name__ == "__main__":
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.bind((SERVER_HOST, SERVER_PORT))
@@ -101,3 +112,6 @@ if __name__ == "__main__":
 
     cleanup_thread = threading.Thread(target=remove_inactive_clients, daemon=True)
     cleanup_thread.start()
+
+    statistics_thread = threading.Thread(target=print_server_statistics, daemon=True)
+    statistics_thread.start()
