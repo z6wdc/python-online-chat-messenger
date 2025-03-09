@@ -1,4 +1,4 @@
-import json
+import time
 import socket
 import threading
 
@@ -6,16 +6,37 @@ SERVER_HOST = '127.0.0.1'
 SERVER_PORT = 12345
 BUFFER_SIZE = 4096
 
-clients = set()
+MAX_FAILURES = 3
+CLEANUP_INTERVAL = 5
+INACTIVITY_TIMEOUT = 30
+
+client_failures = {}
+client_timestamp = {}
+
+lock = threading.Lock()
+
+# Function to increment client failure count and remove if exceeded
+def increment_failure_count(client_address):
+    client_failures[client_address] += 1
+    if client_failures[client_address] >= MAX_FAILURES:
+        remove_client_due_to_failures(client_address)
+
+# Function to remove a client due to repeated failures
+def remove_client_due_to_failures(client_address):
+    del client_failures[client_address]
+    del client_timestamp[client_address]
+    print(f"Client {client_address} removed due to repeated failures.")
 
 # Function to handle incoming messages and broadcast them
 def handle_client(server_socket):
     while True:
         try:
             message, client_address = server_socket.recvfrom(BUFFER_SIZE)
+            current_time = time.time()
             
             if len(message) < 2:
                 print("Received an invalid message, ignoring...")
+                increment_failure_count(client_address)
                 continue
 
             # Extract username length
@@ -23,30 +44,50 @@ def handle_client(server_socket):
 
             if len(message) < 1 + username_length:
                 print("Received a malformed message, ignoring...")
+                increment_failure_count(client_address)
                 continue
             
             try:
                 username = message[1:1 + username_length].decode('utf-8')
             except UnicodeDecodeError:
                 print("Error decoding username, ignoring this message.")
+                increment_failure_count(client_address)
                 continue
 
             try:
                 message_body = message[1 + username_length:].decode('utf-8')
             except UnicodeDecodeError:
                 print("Error decoding message body, ignoring this message.")
+                increment_failure_count(client_address)
                 continue
 
             print(f"{username}: {message_body}")
-            
-            # Store the client address
-            clients.add(client_address)
-            
+
+            with lock:
+                client_failures[client_address] = 0
+                client_timestamp[client_address] = current_time
+
             # Broadcast the message to all clients
-            for client in clients:
-                server_socket.sendto(message, client)
+            for client in list(client_timestamp.keys()):
+                try:
+                    server_socket.sendto(message, client)
+                except Exception as e:
+                    increment_failure_count(client)
+
         except Exception as e:
             print(f"Error: {e}")
+
+
+def remove_inactive_clients():
+    while True:
+        time.sleep(CLEANUP_INTERVAL)
+        current_time = time.time()
+        with lock:
+            for client in list(client_timestamp.keys()):
+                if current_time - client_timestamp[client] > INACTIVITY_TIMEOUT:
+                    del client_failures[client]
+                    del client_timestamp[client]
+                    print(f"Client {client} removed due to inactivity.")
 
 
 if __name__ == "__main__":
@@ -57,3 +98,6 @@ if __name__ == "__main__":
     # args must be a tuple, even if there is only one argument
     thread = threading.Thread(target=handle_client, args=(server_socket,))
     thread.start()
+
+    cleanup_thread = threading.Thread(target=remove_inactive_clients, daemon=True)
+    cleanup_thread.start()
