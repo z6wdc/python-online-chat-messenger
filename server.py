@@ -1,3 +1,4 @@
+import json
 import uuid
 import time
 import socket
@@ -46,7 +47,7 @@ def receive_full_data(client_socket, expected_size):
     return receive_data
 
 
-def handle_tcp_client(cleint_socket, client_address):
+def handle_tcp_client(client_socket, client_address):
     try:
         header = client_socket.recv(32)
         if not header and len(header) < 32:
@@ -58,6 +59,8 @@ def handle_tcp_client(cleint_socket, client_address):
         state = header[2]
         payload_size = int.from_bytes(header[3:32], 'big')
 
+        print(payload_size)
+
         # validate
         if room_name_size <= 0 or room_name_size > MAX_ROOM_NAME_SIZE:
             return
@@ -66,39 +69,75 @@ def handle_tcp_client(cleint_socket, client_address):
         if state not in (REQUEST, ACKNOWLEDGE, COMPLETE):
             return
 
-        payload = receive_full_data(client_socket, payload_size).decode('utf-8')
-        if len(payload) < payload_size:
-            return
-
-        room_name = payload[:room_name_size]
-        username = payload[room_name_size:]
-
         with lock:
             if operation == CREATE_ROOM and state == REQUEST:
                 acknowledge_response = json.dumps({"status": ACKNOWLEDGE}).encode('utf-8')
                 client_socket.send(acknowledge_response)
+
+                payload = receive_full_data(client_socket, room_name_size + payload_size)
+                if len(payload) < payload_size:
+                    return
+
+                print(payload)
+
+                room_name = payload[:room_name_size].decode('utf-8')
+                username = payload[room_name_size:].decode('utf-8')
+
+                print(room_name)
+                print(username)
 
                 if room_name in chat_rooms:
                     response = json.dumps({"error": "Room name already exists"}).encode('utf-8')
                     client_socket.send(response)
                 else:
                     token = generate_token()
-                    chat_rooms[room_name] = {"host_token": token, "host_address": client_address, "members": {}}
                     active_tokens[token] = (room_name, client_address, username)
+                    chat_rooms[room_name] = {"host_token": token, "host_address": client_address, "members": {}}
                     
                     completion_response = json.dumps({"status": COMPLETE, "token": token}).encode('utf-8')
                     client_socket.send(completion_response)
 
+                    udp_port_bytes = client_socket.recv(2)
+                    if not udp_port_bytes:
+                        print("Client did not send UDP port, closing connection.")
+                        return
+                        
+                    udp_port = int.from_bytes(udp_port_bytes, 'big')
+                    active_tokens[token] = (room_name, (client_address[0], udp_port), username)
+                    chat_rooms[room_name] = {"host_token": token, "host_address": (client_address[0], udp_port), "members": {}}
+
             elif operation == JOIN_ROOM and state == REQUEST:
+                acknowledge_response = json.dumps({"status": ACKNOWLEDGE}).encode('utf-8')
+                client_socket.send(acknowledge_response)
+
+                payload = receive_full_data(client_socket, room_name_size + payload_size).decode('utf-8')
+                if len(payload) < payload_size:
+                    return
+
+                room_name = payload[:room_name_size]
+                username = payload[room_name_size:]
+
                 token = generate_token()
+
                 if room_name in chat_rooms:
-                    chat_rooms[room_name]["members"][token] = (client_address, username)
                     active_tokens[token] = (room_name, client_address, username)
-                    response = json.dumps({"status": STATE_COMPLETE, "token": token}).encode('utf-8')
+                    chat_rooms[room_name]["members"][token] = (client_address, username)
+                    response = json.dumps({"status": COMPLETE, "token": token}).encode('utf-8')
                     client_socket.send(response)
+
+                    udp_port_bytes = client_socket.recv(2)
+                    if not udp_port_bytes:
+                        print("Client did not send UDP port, closing connection.")
+                        return
+                        
+                    udp_port = int.from_bytes(udp_port_bytes, 'big')
+                    active_tokens[token] = (room_name, (client_address[0], udp_port), username)
+                    chat_rooms[room_name]["members"][token] = ((client_address[0], udp_port), username)
+
                 else:
                     response = json.dumps({"error": "Room not found"}).encode('utf-8')
                     client_socket.send(response)
+            
     finally:
         client_socket.close()
 
@@ -132,16 +171,24 @@ def handle_udp_messages(server_socket):
         try:
             token = message[2 + room_name_size:2 + room_name_size + token_size].decode('utf-8')
         except UnicodeDecodeError:
-            print(f"Invalid UTF-8 encoding in ㄙㄜ from {client_address}")
+            print(f"Invalid UTF-8 encoding in from {client_address}")
             continue
         
         with lock:
+            print()
+            print(active_tokens)
             if token in active_tokens and active_tokens[token][0] == room_name:
                 client_timestamp[client_address] = time.time()
                 client_failures[client_address] = 0
                 
                 sender_username = active_tokens.get(token, (None, None, "Unknown"))[2]
                 relay_message = sender_username.encode('utf-8') + b':' + message[2 + room_name_size + token_size:]
+
+                print(client_address)
+                print(room_name)
+                print(relay_message)
+                print(chat_rooms)
+                print()
 
                 for member_token, (address, _) in chat_rooms[room_name]["members"].items():
                     if address != client_address:
@@ -201,4 +248,4 @@ if __name__ == "__main__":
         while True:
             pass  # Keep the main thread alive
     except KeyboardInterrupt:
-        print("Shutting down server...")
+        print("\nShutting down server...")
