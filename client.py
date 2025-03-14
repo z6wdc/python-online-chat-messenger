@@ -86,7 +86,7 @@ threading.Thread(target=receive_messages, daemon=True).start()
 
 while True:
     try:
-        message_body = input("Type message: ")
+        message_body = input()
         if message_body.lower() == "/exit":
             print("Leaving chat...")
             break

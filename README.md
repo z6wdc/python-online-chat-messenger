@@ -1,30 +1,40 @@
 # Online Chat Messenger
 
-This is a simple UDP-based chat messenger that allows multiple clients to communicate with each other via a central server.
+A lightweight chatroom system that allows clients to create and join chatrooms using TCP for room management and UDP for real-time messaging.
 
 ## Features
-- Clients can connect to the server via a CLI interface.
-- Messages are relayed to all connected clients.
-- The maximum message size is 4096 bytes.
-- Supports usernames with a maximum length of 255 bytes.
-- Encodes and decodes messages in UTF-8.
+- Create & Join Chatrooms.
+- Reliable Room Management (TCP).
+- Real-time Chat (UDP).
 
 ## Installation
 ### Prerequisites
-- Python 3.6 or later
+- Python 3.8 or later
 
-## Running the Server
+## Usage
+### Running the Server
 ```sh
 python3 server.py
 ```
 
-## Running the Client
+### Running the Client
 ```sh
 python3 client.py
 ```
 
-## Usage
-1. Start the server first.
-2. Run multiple clients and enter usernames when prompted.
-3. Type messages to communicate with other connected clients.
-4. Type `exit` to leave the chat.
+Then follow the prompts:
+
+```
+Enter your username: AAA
+Enter the chat room name: room
+Create room (1) or Join room (2)? 0
+Successfully joined room
+```
+
+### Sending Messages
+Simply type a message and press Enter to send.
+
+To exit the chatroom, type:
+```
+/exit
+```
