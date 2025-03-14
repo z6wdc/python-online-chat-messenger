@@ -3,6 +3,7 @@ import uuid
 import time
 import socket
 import threading
+from pprint import pprint
 
 SERVER_HOST = '127.0.0.1'
 UDP_PORT = 12345
@@ -12,7 +13,7 @@ BUFFER_SIZE = 4096
 
 MAX_FAILURES = 3
 CLEANUP_INTERVAL = 10
-INACTIVITY_TIMEOUT = 300
+INACTIVITY_TIMEOUT = 60
 MAX_ROOM_NAME_SIZE = 256
 
 chat_rooms = {}
@@ -59,8 +60,6 @@ def handle_tcp_client(client_socket, client_address):
         state = header[2]
         payload_size = int.from_bytes(header[3:32], 'big')
 
-        print(payload_size)
-
         # validate
         if room_name_size <= 0 or room_name_size > MAX_ROOM_NAME_SIZE:
             return
@@ -78,13 +77,8 @@ def handle_tcp_client(client_socket, client_address):
                 if len(payload) < payload_size:
                     return
 
-                print(payload)
-
                 room_name = payload[:room_name_size].decode('utf-8')
                 username = payload[room_name_size:].decode('utf-8')
-
-                print(room_name)
-                print(username)
 
                 if room_name in chat_rooms:
                     response = json.dumps({"error": "Room name already exists"}).encode('utf-8')
@@ -105,6 +99,8 @@ def handle_tcp_client(client_socket, client_address):
                     udp_port = int.from_bytes(udp_port_bytes, 'big')
                     active_tokens[token] = (room_name, (client_address[0], udp_port), username)
                     chat_rooms[room_name] = {"host_token": token, "host_address": (client_address[0], udp_port), "members": {}}
+                    client_timestamp[(client_address[0], udp_port)] = time.time()
+                    client_failures[(client_address[0], udp_port)] = 0
 
             elif operation == JOIN_ROOM and state == REQUEST:
                 acknowledge_response = json.dumps({"status": ACKNOWLEDGE}).encode('utf-8')
@@ -133,6 +129,8 @@ def handle_tcp_client(client_socket, client_address):
                     udp_port = int.from_bytes(udp_port_bytes, 'big')
                     active_tokens[token] = (room_name, (client_address[0], udp_port), username)
                     chat_rooms[room_name]["members"][token] = ((client_address[0], udp_port), username)
+                    client_timestamp[(client_address[0], udp_port)] = time.time()
+                    client_failures[(client_address[0], udp_port)] = 0
 
                 else:
                     response = json.dumps({"error": "Room not found"}).encode('utf-8')
@@ -174,50 +172,57 @@ def handle_udp_messages(server_socket):
             print(f"Invalid UTF-8 encoding in from {client_address}")
             continue
         
+        print("\nhandle_udp_messages")
         with lock:
-            print()
-            print(active_tokens)
+            pprint(active_tokens)
             if token in active_tokens and active_tokens[token][0] == room_name:
                 client_timestamp[client_address] = time.time()
                 client_failures[client_address] = 0
                 
                 sender_username = active_tokens.get(token, (None, None, "Unknown"))[2]
                 relay_message = sender_username.encode('utf-8') + b':' + message[2 + room_name_size + token_size:]
-
-                print(client_address)
+                
                 print(room_name)
+                print(client_address)
                 print(relay_message)
-                print(chat_rooms)
-                print()
+                pprint(chat_rooms)
 
-                for member_token, (address, _) in chat_rooms[room_name]["members"].items():
+                for _, (address, _) in chat_rooms[room_name]["members"].items():
                     if address != client_address:
                         server_socket.sendto(relay_message, address)
                 
                 host_address = chat_rooms[room_name]["host_address"]
                 if host_address != client_address:
                     server_socket.sendto(relay_message, host_address)
+        
+        print("handle_udp_messages\n")
 
 
-# increment client failure count and remove if exceeded
-def increment_failure_count(client_address):
-    client_failures[client_address] += 1
-    if client_failures[client_address] >= MAX_FAILURES:
-        del client_failures[client_address]
-        del client_timestamp[client_address]
-        print(f"Client {client_address} removed due to repeated failures.")
-
-
-def remove_inactive_clients():
+def remove_inactive_clients(server_socket):
+    print("\nremove_inactive_clients")
     while True:
         time.sleep(CLEANUP_INTERVAL)
         current_time = time.time()
         with lock:
-            for client in list(client_timestamp.keys()):
-                if current_time - client_timestamp[client] > INACTIVITY_TIMEOUT:
-                    del client_failures[client]
-                    del client_timestamp[client]
-                    print(f"Client {client} removed due to inactivity.")
+            pprint(chat_rooms.items())
+            for room_name, room_data in list(chat_rooms.items()):
+                host_token = room_data["host_token"]
+                host_address = room_data["host_address"]
+
+                if current_time - client_timestamp.get(host_address, 0) > INACTIVITY_TIMEOUT:
+                    print(f"Host of room '{room_name}' disconnected. Closing room.")
+
+                    close_message = f"Chatroom '{room_name}' has been closed.".encode('utf-8')
+                    for member_token, (member_address, _) in room_data["members"].items():
+                        server_socket.sendto(close_message, member_address)
+                    
+                    server_socket.sendto(close_message, room_data["host_address"])
+
+                    for member_token in list(room_data["members"].keys()):
+                        del active_tokens[member_token]
+                        
+                    del active_tokens[room_data["host_token"]]
+                    del chat_rooms[room_name]
 
 
 def start_tcp_server():
@@ -236,13 +241,13 @@ def start_udp_server():
     udp_server.bind((SERVER_HOST, UDP_PORT))
     print(f"UDP server started on {SERVER_HOST}:{UDP_PORT}")
     
+    threading.Thread(target=remove_inactive_clients, args=(udp_server,), daemon=True).start()
     handle_udp_messages(udp_server)
 
 
 if __name__ == "__main__":
     threading.Thread(target=start_tcp_server, daemon=True).start()
     threading.Thread(target=start_udp_server, daemon=True).start()
-    threading.Thread(target=remove_inactive_clients, daemon=True).start()
     
     try:
         while True:
