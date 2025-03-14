@@ -1,5 +1,6 @@
 import json
 import socket
+import textwrap
 import threading
 
 
@@ -71,13 +72,27 @@ tcp_socket.send(udp_port_bytes)
 tcp_socket.close()
 
 
+def print_message_box(message):
+    wrapped_message = textwrap.fill(message, width=40)
+    border = "+" + "-" * 42 + "+"
+    print(border)
+    for line in wrapped_message.split("\n"):
+        print(f"| {line.ljust(40)} |")
+    print(border)
+
+
 def receive_messages():
     while True:
         try:
             message, _ = udp_socket.recvfrom(BUFFER_SIZE)
-            print()
-            print(message.decode('utf-8'))
-            print()
+            decoded_message = message.decode('utf-8')
+
+            if "Chatroom" in decoded_message and "has been closed." in decoded_message:
+                print_message_box(decoded_message)
+                udp_socket.close()
+                exit()
+
+            print_message_box(decoded_message)
         except Exception:
             pass
 
@@ -86,7 +101,7 @@ threading.Thread(target=receive_messages, daemon=True).start()
 
 while True:
     try:
-        message_body = input("Type message: ")
+        message_body = input()
         if message_body.lower() == "/exit":
             print("Leaving chat...")
             break
