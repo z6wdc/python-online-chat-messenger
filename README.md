@@ -27,7 +27,7 @@ Then follow the prompts:
 ```
 Enter your username: AAA
 Enter the chat room name: room
-Create room (1) or Join room (2)? 0
+Create room (1) or Join room (2)? 1
 Successfully joined room
 ```
 
