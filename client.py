@@ -13,13 +13,15 @@ username = input("Enter your username: ")
 room_name = input("Enter the chat room name: ")
 operation = input("Create room (1) or Join room (2)? ")
 
+exit_event = threading.Event()
+
+# tcp connect
 tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_socket.connect((SERVER_HOST, TCP_PORT))
 
 room_name_bytes = room_name.encode('utf-8')
 username_bytes = username.encode('utf-8')
 room_name_size = len(room_name_bytes)
-
 
 CREATE_ROOM = 1
 JOIN_ROOM = 2
@@ -62,6 +64,7 @@ else:
     tcp_socket.close()
     exit()
 
+# udp connect
 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_socket.bind(("", 0))
 udp_port = udp_socket.getsockname()[1]
@@ -82,15 +85,20 @@ def print_message_box(message):
 
 
 def receive_messages():
-    while True:
+    while not exit_event.is_set():
         try:
             message, _ = udp_socket.recvfrom(BUFFER_SIZE)
             decoded_message = message.decode('utf-8')
 
             if "Chatroom" in decoded_message and "has been closed." in decoded_message:
                 print_message_box(decoded_message)
-                udp_socket.close()
-                exit()
+                exit_event.set()
+                return
+            
+            if "You have been removed" in decoded_message:
+                print_message_box(decoded_message)
+                exit_event.set()
+                return
 
             print_message_box(decoded_message)
         except Exception:
@@ -99,7 +107,7 @@ def receive_messages():
 
 threading.Thread(target=receive_messages, daemon=True).start()
 
-while True:
+while not exit_event.is_set():
     try:
         message_body = input()
         if message_body.lower() == "/exit":
