@@ -15,6 +15,7 @@ operation = input("Create room (1) or Join room (2)? ")
 
 exit_event = threading.Event()
 
+# tcp connect
 tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_socket.connect((SERVER_HOST, TCP_PORT))
 
@@ -63,6 +64,7 @@ else:
     tcp_socket.close()
     exit()
 
+# udp connect
 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_socket.bind(("", 0))
 udp_port = udp_socket.getsockname()[1]
@@ -89,6 +91,11 @@ def receive_messages():
             decoded_message = message.decode('utf-8')
 
             if "Chatroom" in decoded_message and "has been closed." in decoded_message:
+                print_message_box(decoded_message)
+                exit_event.set()
+                return
+            
+            if "You have been removed" in decoded_message:
                 print_message_box(decoded_message)
                 exit_event.set()
                 return

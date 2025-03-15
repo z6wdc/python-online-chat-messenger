@@ -19,7 +19,6 @@ MAX_ROOM_NAME_SIZE = 256
 chat_rooms = {}
 active_tokens = {}
 
-client_failures = {}
 client_timestamp = {}
 
 lock = threading.Lock()
@@ -100,7 +99,6 @@ def handle_tcp_client(client_socket, client_address):
                     active_tokens[token] = (room_name, (client_address[0], udp_port), username)
                     chat_rooms[room_name] = {"host_token": token, "host_address": (client_address[0], udp_port), "members": {}}
                     client_timestamp[(client_address[0], udp_port)] = time.time()
-                    client_failures[(client_address[0], udp_port)] = 0
 
             elif operation == JOIN_ROOM and state == REQUEST:
                 acknowledge_response = json.dumps({"status": ACKNOWLEDGE}).encode('utf-8')
@@ -130,7 +128,6 @@ def handle_tcp_client(client_socket, client_address):
                     active_tokens[token] = (room_name, (client_address[0], udp_port), username)
                     chat_rooms[room_name]["members"][token] = ((client_address[0], udp_port), username)
                     client_timestamp[(client_address[0], udp_port)] = time.time()
-                    client_failures[(client_address[0], udp_port)] = 0
 
                 else:
                     response = json.dumps({"error": "Room not found"}).encode('utf-8')
@@ -177,7 +174,6 @@ def handle_udp_messages(server_socket):
             pprint(active_tokens)
             if token in active_tokens and active_tokens[token][0] == room_name:
                 client_timestamp[client_address] = time.time()
-                client_failures[client_address] = 0
                 
                 sender_username = active_tokens.get(token, (None, None, "Unknown"))[2]
                 relay_message = sender_username.encode('utf-8') + b':' + message[2 + room_name_size + token_size:]
@@ -206,9 +202,9 @@ def remove_inactive_clients(server_socket):
         with lock:
             pprint(chat_rooms.items())
             for room_name, room_data in list(chat_rooms.items()):
-                host_token = room_data["host_token"]
                 host_address = room_data["host_address"]
 
+                # check each host in the chatroom
                 if current_time - client_timestamp.get(host_address, 0) > INACTIVITY_TIMEOUT:
                     print(f"Host of room '{room_name}' disconnected. Closing room.")
 
@@ -223,6 +219,24 @@ def remove_inactive_clients(server_socket):
                         
                     del active_tokens[room_data["host_token"]]
                     del chat_rooms[room_name]
+                    continue
+
+                inactive_members = []
+                # check each member in the chatroom
+                for member_token, (member_address, _) in list(room_data["members"].items()):
+                    last_active = client_timestamp.get(member_address, 0)
+                    if current_time - last_active > INACTIVITY_TIMEOUT:
+                        inactive_members.append((member_token, member_address))
+
+                for member_token, member_address in inactive_members:
+                    print(f"Removing inactive client {member_address} from {room_name}")
+                    
+                    remove_message = f"You have been removed from '{room_name}' due to inactivity.".encode('utf-8')
+                    server_socket.sendto(remove_message, member_address)
+
+                    del room_data["members"][member_token]
+                    del active_tokens[member_token]
+                    del client_timestamp[member_address]
 
 
 def start_tcp_server():
